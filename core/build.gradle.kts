@@ -59,6 +59,9 @@ dependencies {
 afterEvaluate {
     tasks.withType(GolangBuildTask::class.java).forEach {
         it.inputs.dir(golangSource)
+        // 16 KB page size support: cgo passes CGO_LDFLAGS through to the
+        // external linker invocation used to build libclash.so.
+        it.environment("CGO_LDFLAGS", "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384")
     }
 }
 

@@ -43,7 +43,7 @@ subprojects {
         buildFeatures.buildConfig = true
         defaultConfig {
             if (isApp) {
-                applicationId = "com.github.metacubex.clash"
+                applicationId = "com.stservice.stvpn"
             }
 
             project.name.let { name ->
@@ -54,8 +54,8 @@ subprojects {
             minSdk = 21
             targetSdk = 35
 
-            versionName = "2.11.15"
-            versionCode = 211015
+            versionName = "1.6"
+            versionCode = 106
 
             resValue("string", "release_name", "v$versionName")
             resValue("integer", "release_code", "$versionCode")
@@ -111,16 +111,11 @@ subprojects {
             create("meta") {
 
                 dimension = flavorDimensionList[0]
-                versionNameSuffix = ".Meta"
 
                 buildConfigField("boolean", "PREMIUM", "Boolean.parseBoolean(\"false\")")
 
                 resValue("string", "launch_name", "@string/launch_name_meta")
                 resValue("string", "application_name", "@string/application_name_meta")
-
-                if (isApp) {
-                    applicationIdSuffix = ".meta"
-                }
             }
         }
 

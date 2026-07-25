@@ -1,0 +1,143 @@
+ST VPN — Play Console submission notes
+Compiled from what the app actually does (verified in source), for filling out
+App content / Data safety / Permissions declaration.
+
+============================================================
+PRIVACY POLICY URL
+============================================================
+https://stservice1.github.io/app/docs/privacy-policy.html
+
+============================================================
+DATA SAFETY — "Does your app collect or share any of the required
+user data types?"
+============================================================
+Answer: Yes
+
+Reasoning: the node code is transmitted off-device (DNS query to a public
+resolver) for validation, and the proxy screen shows remaining quota tied to
+the node code — meaning usage is tracked server-side against that code. Not
+traditional personal info (no name/email/phone), but still data collection
+under Play's definition.
+
+============================================================
+ACCOUNT CREATION
+============================================================
+Question: "Which of the following methods of account creation does your
+app support?"
+Answer: "My app doesn't allow users to create an account" (or equivalent
+"None" option)
+
+Reasoning: the node code is an activation/license code, not an account —
+no username, password, email, or phone tied to identity.
+
+============================================================
+QUERY_ALL_PACKAGES PERMISSION DECLARATION
+============================================================
+Category to select: Device security / VPN / firewall / device management
+(the option covering antivirus, VPN, firewall, or device management apps)
+
+Explanation text:
+"ST VPN's VPN engine supports process-based proxy routing rules — rules
+that direct traffic based on which app/process generated it, rather than
+only domain or IP. To match a network connection to the app/process that
+created it, the engine needs to resolve UIDs to installed package names
+across all installed apps, including background components without a
+launcher icon. This mapping is refreshed on-device whenever the VPN starts
+or an app is installed/removed, and is used only internally by the routing
+engine — never transmitted off the device."
+
+Source: service/src/main/java/com/github/kr328/clash/service/clash/module/AppListCacheModule.kt
+— runs continuously while the VPN service is active, calls
+packageManager.getInstalledPackages() and feeds the UID-to-package mapping
+into the native Clash core via Clash.notifyInstalledAppsChanged(), which
+powers "Process" rule matching (see full_description.txt: "Rules based off
+domains, GEOIP, IPCIDR or Process to forward packets to different nodes").
+
+Note: there is also an unused Access Control UI (AccessControlActivity.kt)
+for manually choosing which apps use the VPN, but Settings is currently
+hidden from the main screen (design_main.xml has it as visibility="gone"),
+so that screen is unreachable. The real, active justification for this
+permission is the process-rule matching above, not that screen.
+
+Demo video: https://stservice1.github.io/app/docs/query-all-packages-demo.mp4
+
+============================================================
+FOREGROUND_SERVICE_SPECIAL_USE PERMISSION DECLARATION
+============================================================
+Special use task type: Other
+
+Services declared with foregroundServiceType="specialUse":
+  - TunService (service module) — the actual VPN tunnel, via Android's
+    VpnService API
+  - ClashService (service module) — the proxy engine background process
+  - ProfileWorker (service module) — background profile/subscription sync
+  - LogcatService (app module) — log capture
+
+Anchor the declaration on TunService — the VPN tunnel — since it's the
+strongest, most directly user-noticeable justification (persistent
+notification, breaks network connectivity if killed).
+
+Description text:
+"ST VPN is a VPN client. When the user starts the VPN, a foreground service
+establishes and maintains the VPN tunnel (via Android's VpnService API),
+continuously routing the device's network traffic through the configured
+proxy servers. This must run immediately and continuously because: (1) it
+has to keep running while the user isn't actively looking at the app, since
+the VPN connection must stay up in the background for all other apps'
+network traffic to keep flowing; (2) if the service were paused or
+restarted, the device would lose VPN routing entirely, breaking network
+connectivity system-wide until manually reconnected; (3) this is a
+persistent, real-time network tunnel, not a schedulable or deferrable task,
+so APIs like WorkManager aren't suitable. The service shows a persistent
+status-bar notification for as long as the VPN is active, making it
+directly noticeable to the user at all times, including while the app is
+backgrounded."
+
+Video script (~20-25s): start VPN (notification appears) -> press Home,
+pull down notification shade to show it persists -> note that killing/
+pausing the service would drop the VPN connection entirely.
+
+Demo video: https://stservice1.github.io/app/docs/foreground-service-special-use-demo.mp4
+
+Known cleanup item (not blocking): all four services currently have the
+PROPERTY_SPECIAL_USE_FGS_SUBTYPE manifest property set to the literal
+placeholder string "explanation_for_special_use" instead of a real
+per-service subtype identifier. Low priority, worth fixing eventually.
+
+============================================================
+DATA SAFETY — PURPOSE OF DATA COLLECTION (per data type)
+============================================================
+Check:
+  [x] App functionality — primary purpose (node code enables VPN activation
+      / config retrieval)
+  [x] Fraud prevention, security, and compliance — LoginActivity.kt tracks
+      failed attempts with a cooldown lockout, and checks for banned/
+      already-used codes
+
+Leave unchecked:
+  [ ] Analytics — no analytics SDK in the app
+  [ ] Developer communications — notification permission is only for VPN
+      status, not news/marketing
+  [ ] Advertising or marketing — no ads
+  [ ] Personalization — no recommendation/customization features
+  [ ] Account management — no account system exists
+
+============================================================
+BACKGROUND / WHAT THE APP ACTUALLY DOES WITH DATA
+============================================================
+- No account system. No name/email/phone/password collected anywhere.
+- Login flow: user enters a "node code" -> app queries a DNS TXT record
+  (via dns.alidns.com, a public DNS-over-HTTPS-style resolver) to check
+  if the code is valid / banned / expired / already used.
+- If valid, retrieves a subscription URL tied to that code, downloads the
+  VPN/proxy configuration from it, stores it locally as a profile.
+- VPN traffic is then routed through the proxy servers defined in that
+  configuration (inherent to how any VPN/proxy client works).
+- Process-based proxy rule matching requires resolving UIDs to installed
+  package names across all installed apps (QUERY_ALL_PACKAGES) — used
+  locally only, feeds the native routing engine, never transmitted.
+- No ads SDK, no analytics SDK, no crash-reporting SDK bundled in the app
+  (verified: no Firebase/AdMob/Crashlytics/Facebook/etc. in build.gradle.kts
+  dependencies).
+- Local-only storage: VPN profile config, failed-login-attempt counter and
+  cooldown timestamp (SharedPreferences, on-device only).

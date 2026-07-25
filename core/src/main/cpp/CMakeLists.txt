@@ -89,3 +89,4 @@ link_directories("${GO_OUTPUT_BASE}/${CMAKE_ANDROID_ARCH_ABI}")
 
 add_library(bridge SHARED main.c jni_helper.c bridge_helper.c)
 target_link_libraries(bridge log clash)
+target_link_options(bridge PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")

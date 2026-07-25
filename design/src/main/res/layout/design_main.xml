@@ -104,7 +104,7 @@
                         android:id="@+id/versionLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="v1.2"
+                        android:text="@string/release_name"
                         android:textAppearance="@style/TextAppearance.MaterialComponents.Caption" />
                 </LinearLayout>
 
