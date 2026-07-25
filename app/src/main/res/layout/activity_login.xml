@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="top|center_horizontal"
+    android:paddingStart="32dp"
+    android:paddingEnd="32dp"
+    android:paddingBottom="32dp"
+    android:paddingTop="56dp"
+    android:background="#000000"
+    android:weightSum="3">
+    
+    <!-- Spacer to position content near the upper third line -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+    
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="24dp">
+        
+        <ImageView
+            android:layout_width="@dimen/main_logo_size"
+            android:layout_height="@dimen/main_logo_size"
+            android:src="@drawable/logo"
+            android:layout_marginEnd="16dp" />
+        
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ST VPN Service"
+            android:textSize="32sp"
+            android:textStyle="bold"
+            android:textColor="#6b8069"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <!-- Error message area - always present to prevent layout jumping -->
+    <TextView
+        android:id="@+id/errorMessage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp"
+        android:minHeight="48dp"
+        android:gravity="center"
+        android:textSize="14sp"
+        android:textColor="#F44336"
+        android:background="#1A0000"
+        android:padding="12dp"
+        android:visibility="invisible"
+        android:text="" />
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp"
+        android:hint="Enter Node Code"
+        app:hintTextColor="#90CAF9"
+        app:boxStrokeColor="#2196F3"
+        app:boxBackgroundColor="#1A1A1A"
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/nodeCodeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textNoSuggestions"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#90CAF9" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/loginButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Log in"
+            android:textSize="16sp"
+            android:paddingTop="16dp"
+            android:paddingBottom="16dp"
+            android:backgroundTint="#2196F3"
+            android:textColor="#FFFFFF"
+            app:cornerRadius="24dp"
+            style="@style/Widget.MaterialComponents.Button" />
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminateTint="#2196F3"
+            android:visibility="gone" />
+
+        <!-- Cooldown countdown label over the button area -->
+        <TextView
+            android:id="@+id/cooldownText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:paddingTop="16dp"
+            android:paddingBottom="16dp"
+            android:backgroundTintMode="src_over"
+            android:visibility="gone"
+            android:text="" />
+    </FrameLayout>
+
+    <!-- Bottom spacer fills remaining 2/3 to keep content near upper third -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="2" />
+
+</LinearLayout>

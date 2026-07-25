@@ -1,0 +1,31 @@
+# Secrets / local-only config — never commit
+local.properties
+github_token
+release.keystore
+signing.properties
+*.jks
+*.keystore
+
+# Build outputs
+build/
+*/build/
+.cxx/
+.kotlin/
+
+# Gradle
+.gradle/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.navigation/
+
+# OS
+.DS_Store
+
+# Prebuilt/reference APKs (not source)
+*.apk
+!fastlane/**/*.apk
+
+# Native core source is a git submodule (see .gitmodules)
