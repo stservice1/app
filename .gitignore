@@ -24,8 +24,4 @@ captures/
 # OS
 .DS_Store
 
-# Prebuilt/reference APKs (not source)
-*.apk
-!fastlane/**/*.apk
-
 # Native core source is a git submodule (see .gitmodules)
