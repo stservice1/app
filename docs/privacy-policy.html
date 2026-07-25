@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ST VPN — Privacy Policy</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.8em; }
+  h2 { font-size: 1.25em; margin-top: 1.8em; }
+  .updated { color: #666; font-size: 0.9em; }
+  ul { padding-left: 1.4em; }
+</style>
+</head>
+<body>
+<h1>ST VPN — Privacy Policy</h1>
+<p class="updated">Last updated: 2026-07-25</p>
+
+<p>ST VPN ("the app") is a VPN and proxy client for Android, published by STService / Intercode. This policy explains what data the app handles and how.</p>
+
+<h2>What the app does not collect</h2>
+<ul>
+  <li>No account registration — there are no usernames, email addresses, or passwords.</li>
+  <li>No personally identifiable information is collected or stored by the app or its developers.</li>
+  <li>No advertising SDKs, analytics SDKs, or crash-reporting SDKs are included in the app.</li>
+</ul>
+
+<h2>Node code login</h2>
+<p>Instead of an account, the app uses a "node code" that you enter to activate the service. When you submit a node code, the app:</p>
+<ul>
+  <li>Queries a DNS TXT record (via a public DNS-over-HTTPS resolver) containing the node code, to check whether it is valid, banned, expired, or already used.</li>
+  <li>If valid, retrieves a subscription URL associated with that node code, and uses it to download your VPN/proxy configuration.</li>
+</ul>
+<p>The node code itself is not tied to any personal identity we hold — it is an activation code, not a username. The code is cached on your device only, so it doesn't have to be re-entered on every app start.</p>
+
+<h2>VPN / proxy traffic</h2>
+<p>Like any VPN or proxy app, once connected, your network traffic is routed through the proxy servers defined in your downloaded configuration in order to provide the service. This is inherent to how a VPN/proxy client functions.</p>
+
+<h2>Permissions</h2>
+<p>The app requests the following notable permissions:</p>
+<ul>
+  <li><strong>VPN service</strong> — required to route traffic through the configured proxy/VPN servers.</li>
+  <li><strong>Query installed apps</strong> — used only for the app's per-app proxy access control feature (letting you choose which installed apps use the VPN). This list is used locally on your device and is not transmitted anywhere.</li>
+  <li><strong>Notifications</strong> — used to show the VPN connection status.</li>
+</ul>
+
+<h2>Data stored on your device</h2>
+<p>The app stores the following locally on your device only, never transmitted to us:</p>
+<ul>
+  <li>Your VPN/proxy configuration profile (downloaded from your subscription URL).</li>
+  <li>Login attempt counters and a temporary cooldown timer, used to rate-limit repeated invalid node code attempts.</li>
+</ul>
+
+<h2>Third parties</h2>
+<p>Validating a node code requires sending a DNS query (containing the node code) to a public DNS resolver. Once validated, your device downloads your proxy configuration from the subscription URL associated with your node code, and subsequently routes traffic through the proxy/VPN servers defined in that configuration.</p>
+
+<h2>Children's privacy</h2>
+<p>The app is not directed at children and we do not knowingly collect data from children.</p>
+
+<h2>Changes to this policy</h2>
+<p>We may update this policy from time to time. Changes will be posted on this page.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy can be sent to <a href="mailto:business@intercode.se">business@intercode.se</a>.</p>
+
+</body>
+</html>
