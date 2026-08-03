@@ -52,10 +52,10 @@ subprojects {
             }
 
             minSdk = 21
-            targetSdk = 35
+            targetSdk = 36
 
-            versionName = "1.7"
-            versionCode = 107
+            versionName = "1.8"
+            versionCode = 108
 
             resValue("string", "release_name", "v$versionName")
             resValue("integer", "release_code", "$versionCode")
@@ -168,9 +168,11 @@ subprojects {
         if (isApp) {
             this as AppExtension
 
+            val isBundleBuild = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+
             splits {
                 abi {
-                    isEnable = true
+                    isEnable = !isBundleBuild
                     isUniversalApk = true
                     reset()
                     include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
