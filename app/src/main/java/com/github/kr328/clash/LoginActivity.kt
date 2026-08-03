@@ -271,20 +271,20 @@ class LoginActivity : AppCompatActivity() {
                             
                             // Use cache-aware logic through orchestrator
                             val orchestrator = STServiceOrchestrator.getInstance()
-                            val cachedTxtInfo = orchestrator.getCachedTxtRecordForLogin(this@LoginActivity)
-                            
+                            val cachedTxtInfo = orchestrator.getCachedTxtRecordForLogin(this@LoginActivity, nodeCode)
+
                             val finalTxtInfo = if (cachedTxtInfo != null && txtData.isNotEmpty()) {
                                 if (txtInfo.modified <= cachedTxtInfo.modified) {
                                     Log.d("LoginActivity", "DNS returned stale data (${txtInfo.modified} <= ${cachedTxtInfo.modified}), using cached")
                                     cachedTxtInfo
                                 } else {
                                     Log.d("LoginActivity", "DNS returned fresh data (${txtInfo.modified} > ${cachedTxtInfo.modified}), updating cache")
-                                    orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo)
+                                    orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
                                     txtInfo
                                 }
                             } else {
                                 Log.d("LoginActivity", "No cached data available, using fresh DNS data")
-                                orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo)
+                                orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
                                 txtInfo
                             }
                             

@@ -47,6 +47,7 @@ class STServiceOrchestrator private constructor() {
         private const val PREF_LAST_CHECK = "last_check"
         private const val PREF_ERROR_MESSAGE = "error_message"
         private const val PREF_CACHED_TXT_RECORD = "cached_txt_record"
+        private const val PREF_CACHED_NODE_CODE = "cached_node_code"
         private const val PREF_DYNU_API_KEY = "dynu_api_key"
 
         private const val DYNU_API_BASE_URL = "https://api.dynu.com/v2/dns"
@@ -118,12 +119,12 @@ class STServiceOrchestrator private constructor() {
         setErrorMessage(context, null)
     }
     
-    fun getCachedTxtRecordForLogin(context: Context): com.github.kr328.clash.util.TXTRecordInfo? {
-        return getCachedTxtRecord(context)
+    fun getCachedTxtRecordForLogin(context: Context, nodeCode: String): com.github.kr328.clash.util.TXTRecordInfo? {
+        return getCachedTxtRecord(context, nodeCode)
     }
-    
-    fun cacheTxtRecordForLogin(context: Context, txtInfo: com.github.kr328.clash.util.TXTRecordInfo) {
-        cacheTxtRecord(context, txtInfo)
+
+    fun cacheTxtRecordForLogin(context: Context, txtInfo: com.github.kr328.clash.util.TXTRecordInfo, nodeCode: String) {
+        cacheTxtRecord(context, txtInfo, nodeCode)
     }
     
     fun setDynuApiKey(context: Context, apiKey: String) {
@@ -174,7 +175,7 @@ class STServiceOrchestrator private constructor() {
                 Log.d("STServiceOrchestrator", "Successfully updated consumed=true via Dynu API")
                 // Update local cache with consumed=true
                 val updatedTxtInfo = txtInfo.copy(consumed = true, modified = System.currentTimeMillis() / 1000L)
-                cacheTxtRecord(context, updatedTxtInfo)
+                cacheTxtRecord(context, updatedTxtInfo, nodeCode)
             } else {
                 Log.w("STServiceOrchestrator", "Failed to update consumed status via Dynu API")
                 failConsumedUpdate(context, "Failed to update consumed status via API. Status code: $statusCode", onError)
@@ -255,15 +256,26 @@ class STServiceOrchestrator private constructor() {
         }
     }
     
-    private fun cacheTxtRecord(context: Context, txtInfo: com.github.kr328.clash.util.TXTRecordInfo) {
+    private fun cacheTxtRecord(context: Context, txtInfo: com.github.kr328.clash.util.TXTRecordInfo, nodeCode: String) {
         val prefs = getPrefs(context)
         val jsonString = serializeTxtRecord(txtInfo)
-        prefs.edit().putString(PREF_CACHED_TXT_RECORD, jsonString).apply()
-        Log.d("STServiceOrchestrator", "Cached TXT record with modified timestamp: ${txtInfo.modified}")
+        prefs.edit()
+            .putString(PREF_CACHED_TXT_RECORD, jsonString)
+            .putString(PREF_CACHED_NODE_CODE, nodeCode)
+            .apply()
+        Log.d("STServiceOrchestrator", "Cached TXT record for node $nodeCode with modified timestamp: ${txtInfo.modified}")
     }
-    
-    private fun getCachedTxtRecord(context: Context): com.github.kr328.clash.util.TXTRecordInfo? {
+
+    /**
+     * Returns the cached TXT record only if it belongs to [nodeCode]. The cache is a single
+     * slot shared between the login flow (where the user may probe several different node
+     * codes) and active-profile monitoring, so without this check a record cached for one
+     * node code could be mistaken for stale/duplicate data of a completely different one.
+     */
+    private fun getCachedTxtRecord(context: Context, nodeCode: String): com.github.kr328.clash.util.TXTRecordInfo? {
         val prefs = getPrefs(context)
+        val cachedNodeCode = prefs.getString(PREF_CACHED_NODE_CODE, null)
+        if (cachedNodeCode != nodeCode) return null
         val jsonString = prefs.getString(PREF_CACHED_TXT_RECORD, null) ?: return null
         return deserializeTxtRecord(jsonString)
     }
@@ -629,21 +641,27 @@ class STServiceOrchestrator private constructor() {
     }
     
     suspend fun fetchTXTRecordWithMandatoryCheck(context: Context): com.github.kr328.clash.util.TXTRecordInfo? {
-        val cachedTxt = getCachedTxtRecord(context)
-        val freshTxt = checkTXTRecordMandatory()
-        
+        val nodeCode = getNodeCodeFromActiveProfile()
+        if (nodeCode == null) {
+            Log.w("STServiceOrchestrator", "No node code found in active profile")
+            return null
+        }
+
+        val cachedTxt = getCachedTxtRecord(context, nodeCode)
+        val freshTxt = checkTXTRecordMandatory(nodeCode)
+
         if (cachedTxt != null && freshTxt != null) {
             if (freshTxt.modified <= cachedTxt.modified) {
                 Log.d("STServiceOrchestrator", "DNS returned stale data (${freshTxt.modified} <= ${cachedTxt.modified}), using cached")
                 return cachedTxt
             } else {
                 Log.d("STServiceOrchestrator", "DNS returned fresh data (${freshTxt.modified} > ${cachedTxt.modified}), updating cache")
-                cacheTxtRecord(context, freshTxt)
+                cacheTxtRecord(context, freshTxt, nodeCode)
                 return freshTxt
             }
         } else if (freshTxt != null) {
             Log.d("STServiceOrchestrator", "No cached data, using fresh DNS data (${freshTxt.modified})")
-            cacheTxtRecord(context, freshTxt)
+            cacheTxtRecord(context, freshTxt, nodeCode)
             return freshTxt
         } else if (cachedTxt != null) {
             Log.w("STServiceOrchestrator", "DNS fetch failed, but this is mandatory - not using cached data")
@@ -653,23 +671,29 @@ class STServiceOrchestrator private constructor() {
             return null
         }
     }
-    
+
     suspend fun fetchTXTRecordWithCache(context: Context): com.github.kr328.clash.util.TXTRecordInfo? {
-        val cachedTxt = getCachedTxtRecord(context)
-        val freshTxt = checkTXTRecord()
-        
+        val nodeCode = getNodeCodeFromActiveProfile()
+        if (nodeCode == null) {
+            Log.w("STServiceOrchestrator", "No node code found in active profile")
+            return null
+        }
+
+        val cachedTxt = getCachedTxtRecord(context, nodeCode)
+        val freshTxt = checkTXTRecord(nodeCode)
+
         if (cachedTxt != null && freshTxt != null) {
             if (freshTxt.modified <= cachedTxt.modified) {
                 Log.d("STServiceOrchestrator", "DNS returned stale data (${freshTxt.modified} <= ${cachedTxt.modified}), using cached")
                 return cachedTxt
             } else {
                 Log.d("STServiceOrchestrator", "DNS returned fresh data (${freshTxt.modified} > ${cachedTxt.modified}), updating cache")
-                cacheTxtRecord(context, freshTxt)
+                cacheTxtRecord(context, freshTxt, nodeCode)
                 return freshTxt
             }
         } else if (freshTxt != null) {
             Log.d("STServiceOrchestrator", "No cached data, using fresh DNS data (${freshTxt.modified})")
-            cacheTxtRecord(context, freshTxt)
+            cacheTxtRecord(context, freshTxt, nodeCode)
             return freshTxt
         } else if (cachedTxt != null) {
             Log.d("STServiceOrchestrator", "DNS fetch failed, using cached data (${cachedTxt.modified})")
@@ -679,15 +703,9 @@ class STServiceOrchestrator private constructor() {
             return null
         }
     }
-    
-    private suspend fun checkTXTRecordMandatory(): com.github.kr328.clash.util.TXTRecordInfo? = withContext(Dispatchers.IO) {
+
+    private suspend fun checkTXTRecordMandatory(nodeCode: String): com.github.kr328.clash.util.TXTRecordInfo? = withContext(Dispatchers.IO) {
         try {
-            val nodeCode = getNodeCodeFromActiveProfile()
-            if (nodeCode == null) {
-                Log.w("STServiceOrchestrator", "No node code found in active profile")
-                return@withContext null
-            }
-            
             val txtCheckURL = buildTXTCheckURL(nodeCode)
             Log.d("STServiceOrchestrator", "Mandatory TXT record check for: $txtCheckURL")
             
@@ -718,14 +736,8 @@ class STServiceOrchestrator private constructor() {
         }
     }
     
-    private suspend fun checkTXTRecord(): com.github.kr328.clash.util.TXTRecordInfo? = withContext(Dispatchers.IO) {
+    private suspend fun checkTXTRecord(nodeCode: String): com.github.kr328.clash.util.TXTRecordInfo? = withContext(Dispatchers.IO) {
         try {
-            val nodeCode = getNodeCodeFromActiveProfile()
-            if (nodeCode == null) {
-                Log.w("STServiceOrchestrator", "No node code found in active profile")
-                return@withContext null
-            }
-            
             val txtCheckURL = buildTXTCheckURL(nodeCode)
             Log.d("STServiceOrchestrator", "Checking TXT record for: $txtCheckURL")
             
