@@ -305,7 +305,11 @@ class MainActivity : BaseActivity<MainDesign>() {
 
             // Mark as consumed via Dynu API (only if not already consumed)
             if (!txtInfo.consumed) {
-                orchestrator.updateConsumedStatus(this@MainActivity, txtInfo)
+                orchestrator.updateConsumedStatus(this@MainActivity, txtInfo) { message ->
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
                 Log.d("MainActivity", "Subscription marked as consumed via traffic-triggered validation")
             }
             

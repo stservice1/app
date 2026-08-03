@@ -136,45 +136,64 @@ class STServiceOrchestrator private constructor() {
         return getPrefs(context).getString(PREF_DYNU_API_KEY, null)
     }
     
-    suspend fun updateConsumedStatus(context: Context, txtInfo: com.github.kr328.clash.util.TXTRecordInfo) {
+    suspend fun updateConsumedStatus(
+        context: Context,
+        txtInfo: com.github.kr328.clash.util.TXTRecordInfo,
+        onError: (suspend (String) -> Unit)? = null
+    ) {
         try {
             val nodeCode = getNodeCodeFromActiveProfile()
             if (nodeCode == null) {
                 Log.w("STServiceOrchestrator", "No node code found for consumed update")
+                failConsumedUpdate(context, "No node code found - cannot update consumed status", onError)
                 return
             }
-            
+
             val apiKey = getDynuApiKey(context)
-            if (apiKey == null) {
-                Log.w("STServiceOrchestrator", "No Dynu API key configured - skipping consumed update")
+            if (apiKey.isNullOrEmpty()) {
+                Log.w("STServiceOrchestrator", "No Dynu API key configured - cannot update consumed status")
+                failConsumedUpdate(context, "No API key configured - cannot update consumed status", onError)
                 return
             }
-            
+
             if (txtInfo.domainId == 0L || txtInfo.recordId == 0L) {
                 Log.w("STServiceOrchestrator", "Missing domain_id or record_id - cannot update consumed status")
+                failConsumedUpdate(context, "Missing domain_id or record_id - cannot update consumed status", onError)
                 return
             }
-            
+
             Log.d("STServiceOrchestrator", "Updating consumed=true via Dynu API for node: $nodeCode")
-            
+
             // Create updated JSON with consumed=true
             val updatedJson = createUpdatedTxtRecord(txtInfo, nodeCode, consumed = true)
-            
+
             // Call Dynu API
-            val success = callDynuApiToUpdateRecord(apiKey, txtInfo.domainId, txtInfo.recordId, nodeCode, updatedJson)
-            
-            if (success) {
+            val statusCode = callDynuApiToUpdateRecord(apiKey, txtInfo.domainId, txtInfo.recordId, nodeCode, updatedJson)
+
+            if (statusCode == HttpURLConnection.HTTP_OK) {
                 Log.d("STServiceOrchestrator", "Successfully updated consumed=true via Dynu API")
                 // Update local cache with consumed=true
                 val updatedTxtInfo = txtInfo.copy(consumed = true, modified = System.currentTimeMillis() / 1000L)
                 cacheTxtRecord(context, updatedTxtInfo)
             } else {
                 Log.w("STServiceOrchestrator", "Failed to update consumed status via Dynu API")
+                failConsumedUpdate(context, "Failed to update consumed status via API. Status code: $statusCode", onError)
             }
-            
+
         } catch (e: Exception) {
             Log.e("STServiceOrchestrator", "Error updating consumed status", e)
+            failConsumedUpdate(context, "Error updating consumed status: ${e.message}", onError)
         }
+    }
+
+    /** Stops the VPN and reports [message] to the caller when a consumed-status update cannot proceed. */
+    private suspend fun failConsumedUpdate(context: Context, message: String, onError: (suspend (String) -> Unit)?) {
+        try {
+            context.stopClashService()
+        } catch (e: Exception) {
+            Log.e("STServiceOrchestrator", "Error stopping service after consumed status failure", e)
+        }
+        onError?.invoke(message)
     }
     
     private fun createUpdatedTxtRecord(txtInfo: com.github.kr328.clash.util.TXTRecordInfo, nodeCode: String, consumed: Boolean): String {
@@ -190,7 +209,7 @@ class STServiceOrchestrator private constructor() {
         return json.toString()
     }
     
-    private suspend fun callDynuApiToUpdateRecord(apiKey: String, domainId: Long, recordId: Long, nodeCode: String, textData: String): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun callDynuApiToUpdateRecord(apiKey: String, domainId: Long, recordId: Long, nodeCode: String, textData: String): Int = withContext(Dispatchers.IO) {
         try {
             val url = URL("$DYNU_API_BASE_URL/$domainId/record/$recordId")
             val connection = url.openConnection() as HttpURLConnection
@@ -227,12 +246,12 @@ class STServiceOrchestrator private constructor() {
             Log.d("STServiceOrchestrator", "Dynu API response body: $responseBody")
             
             connection.disconnect()
-            
-            responseCode == HttpURLConnection.HTTP_OK
-            
+
+            responseCode
+
         } catch (e: Exception) {
             Log.e("STServiceOrchestrator", "Error calling Dynu API", e)
-            false
+            -1
         }
     }
     
