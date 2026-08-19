@@ -253,48 +253,75 @@ class LoginActivity : AppCompatActivity() {
                 connection.readTimeout = 10000
                 
                 Log.d("LoginActivity", "DNS query response code: ${connection.responseCode}")
-                if (connection.responseCode == 200) {
-                    val response = connection.inputStream.bufferedReader().readText()
+                if (connection.responseCode != 200) {
                     connection.disconnect()
-                    
-                    Log.d("LoginActivity", "DNS response: $response")
-                    val jsonResponse = JSONObject(response)
-                    val status = jsonResponse.getInt("Status")
-                    
-                    if (status == 0 && jsonResponse.has("Answer")) {
-                        val answers = jsonResponse.getJSONArray("Answer")
-                        if (answers.length() > 0) {
-                            val txtData = answers.getJSONObject(0).getString("data")
-                            Log.d("LoginActivity", "TXT record data: $txtData")
-                            
-                            val txtInfo = TXTRecordParser.parseTXTData(txtData)
-                            
-                            // Use cache-aware logic through orchestrator
-                            val orchestrator = STServiceOrchestrator.getInstance()
-                            val cachedTxtInfo = orchestrator.getCachedTxtRecordForLogin(this@LoginActivity, nodeCode)
+                    Log.w("LoginActivity", "Cannot reach DNS. StatusCode=" + connection.responseCode)
+                    return@withContext ValidationResult(false, "Cannot reach DNS, please try again. Status code: " + connection.responseCode)
+                }
 
-                            val finalTxtInfo = if (cachedTxtInfo != null && txtData.isNotEmpty()) {
-                                if (txtInfo.modified <= cachedTxtInfo.modified) {
-                                    Log.d("LoginActivity", "DNS returned stale data (${txtInfo.modified} <= ${cachedTxtInfo.modified}), using cached")
-                                    cachedTxtInfo
-                                } else {
-                                    Log.d("LoginActivity", "DNS returned fresh data (${txtInfo.modified} > ${cachedTxtInfo.modified}), updating cache")
-                                    orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
-                                    txtInfo
-                                }
+                val response = connection.inputStream.bufferedReader().readText()
+                connection.disconnect()
+
+                Log.d("LoginActivity", "DNS response: $response")
+                val jsonResponse = JSONObject(response)
+                val status = jsonResponse.getInt("Status")
+
+                if (status == 0 && jsonResponse.has("Answer")) {
+                    val answers = jsonResponse.getJSONArray("Answer")
+                    if (answers.length() > 0) {
+                        val txtData = answers.getJSONObject(0).getString("data")
+                        Log.d("LoginActivity", "TXT record data: $txtData")
+
+                        val txtInfo = TXTRecordParser.parseTXTData(txtData)
+
+                        // Use cache-aware logic through orchestrator
+                        val orchestrator = STServiceOrchestrator.getInstance()
+                        val cachedTxtInfo = orchestrator.getCachedTxtRecordForLogin(this@LoginActivity, nodeCode)
+
+                        val finalTxtInfo = if (cachedTxtInfo != null && txtData.isNotEmpty()) {
+                            if (txtInfo.modified <= cachedTxtInfo.modified) {
+                                Log.d("LoginActivity", "DNS returned stale data (${txtInfo.modified} <= ${cachedTxtInfo.modified}), using cached")
+                                cachedTxtInfo
                             } else {
-                                Log.d("LoginActivity", "No cached data available, using fresh DNS data")
+                                Log.d("LoginActivity", "DNS returned fresh data (${txtInfo.modified} > ${cachedTxtInfo.modified}), updating cache")
                                 orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
                                 txtInfo
                             }
-                            
-                            return@withContext validateTxtRecord(finalTxtInfo)
+                        } else {
+                            Log.d("LoginActivity", "No cached data available, using fresh DNS data")
+                            orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
+                            txtInfo
                         }
+
+                        return@withContext validateTxtRecord(finalTxtInfo)
                     }
                 }
-                connection.disconnect()
-                Log.w("LoginActivity", "Node code not found in DNS")
-                ValidationResult(false, "Node code not found")
+
+                // No usable Answer. Distinguish a genuine "this node code
+                // doesn't exist" (NXDOMAIN, RCODE 3) from the resolver itself
+                // failing the query (SERVFAIL, RCODE 2, and other non-zero
+                // RCODEs) — the latter isn't evidence the code is invalid, so
+                // it gets its own message and (since handleValidationFailure
+                // only matches specific strings) doesn't burn one of the
+                // user's 3 login attempts.
+                when (status) {
+                    0 -> {
+                        Log.w("LoginActivity", "Status was 0, but error parsing dns")
+                        ValidationResult(false, "Error parsing DNS: " + jsonResponse)
+                    }
+                    2 -> {
+                        Log.w("LoginActivity", "DNS resolver returned SERVFAIL (status 2) for the query")
+                        ValidationResult(false, "DNS server error, please try again")
+                    }
+                    3 -> {
+                        Log.w("LoginActivity", "Node code not found in DNS (NXDOMAIN)")
+                        ValidationResult(false, "Node code not found")
+                    }
+                    else -> {
+                        Log.w("LoginActivity", "Node code not found in DNS (status $status)")
+                        ValidationResult(false, "DNS error (status $status), please try again")
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("LoginActivity", "Network error during validation: ${e.message}", e)
                 ValidationResult(false, "Network error: ${e.message}")
