@@ -151,9 +151,6 @@ class MainActivity : BaseActivity<MainDesign>() {
 
         val orchestrator = STServiceOrchestrator.getInstance()
 
-        // Configure Dynu API key for consumed status updates
-        orchestrator.setDynuApiKey(this@MainActivity, BuildConfig.DYNU_API_KEY)
-
         try {
             // Launch link check asynchronously FIRST - don't wait for it
             // This must happen before profile validation so it can fix broken links
@@ -303,7 +300,7 @@ class MainActivity : BaseActivity<MainDesign>() {
 
             // Note: Link updates now happen at VPN start, not here during traffic validation
 
-            // Mark as consumed via Dynu API (only if not already consumed)
+            // Mark as consumed via the backend (only if not already consumed)
             if (!txtInfo.consumed) {
                 orchestrator.updateConsumedStatus(this@MainActivity, txtInfo) { message ->
                     runOnUiThread {

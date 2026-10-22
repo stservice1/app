@@ -12,8 +12,6 @@ data class TXTRecordInfo(
     val consumed: Boolean,
     val modified: Long,
     val vpnUrl: String?,
-    val domainId: Long,
-    val recordId: Long,
     // Legacy fields for backward compatibility
     val message: String? = null,
     val link: String? = vpnUrl
@@ -38,9 +36,7 @@ object TXTRecordParser {
             val consumed = json.optBoolean("c", false)
             val modified = json.optLong("m", 0L)
             val vpnUrl = json.optString("u", "")
-            val domainId = json.optLong("d", 0L)
-            val recordId = json.optLong("r", 0L)
-            
+
             // Parse expiration date
             var expiration: Date? = null
             val expirationStr = json.optString("e", "")
@@ -53,20 +49,18 @@ object TXTRecordParser {
                     Log.e(TAG, "Error parsing expiration date: $expirationStr", e)
                 }
             }
-            
-            Log.d(TAG, "Parsed JSON TXT record: v=$version, b=$banned, e=$expiration, c=$consumed, m=$modified, u=$vpnUrl, d=$domainId, r=$recordId")
-            
+
+            Log.d(TAG, "Parsed JSON TXT record: v=$version, b=$banned, e=$expiration, c=$consumed, m=$modified, u=$vpnUrl")
+
             return TXTRecordInfo(
                 version = version,
                 banned = banned,
                 expiration = expiration,
                 consumed = consumed,
                 modified = modified,
-                vpnUrl = if (vpnUrl.isNotEmpty()) vpnUrl else null,
-                domainId = domainId,
-                recordId = recordId
+                vpnUrl = if (vpnUrl.isNotEmpty()) vpnUrl else null
             )
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing TXT record JSON data", e)
             // Return default values if parsing fails
@@ -76,9 +70,7 @@ object TXTRecordParser {
                 expiration = null,
                 consumed = false,
                 modified = 0L,
-                vpnUrl = null,
-                domainId = 0L,
-                recordId = 0L
+                vpnUrl = null
             )
         }
     }

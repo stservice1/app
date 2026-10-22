@@ -31,14 +31,6 @@ subprojects {
 
     apply(plugin = if (isApp) "com.android.application" else "com.android.library")
 
-    val localProperties = Properties().apply {
-        val localPropertiesFile = rootProject.file("local.properties")
-        if (localPropertiesFile.exists()) {
-            localPropertiesFile.inputStream().use(this::load)
-        }
-    }
-    val dynuApiKey = localProperties.getProperty("dynu.apiKey", "")
-
     extensions.configure<BaseExtension> {
         buildFeatures.buildConfig = true
         defaultConfig {
@@ -54,8 +46,8 @@ subprojects {
             minSdk = 21
             targetSdk = 36
 
-            versionName = "1.10"
-            versionCode = 110
+            versionName = "1.11"
+            versionCode = 111
 
             resValue("string", "release_name", "v$versionName")
             resValue("integer", "release_code", "$versionCode")
@@ -74,7 +66,6 @@ subprojects {
                 consumerProguardFiles("consumer-rules.pro")
             } else {
                 setProperty("archivesBaseName", "cmfa-$versionName")
-                buildConfigField("String", "DYNU_API_KEY", "\"$dynuApiKey\"")
             }
         }
 

@@ -30,6 +30,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import com.github.kr328.clash.service.STServiceOrchestrator
 import com.github.kr328.clash.util.TXTRecordParser
+import com.github.kr328.clash.util.TXTRecordSource
 
 class LoginActivity : AppCompatActivity() {
 
@@ -242,89 +243,111 @@ class LoginActivity : AppCompatActivity() {
 
     private suspend fun validateNodeCode(nodeCode: String): ValidationResult {
         return withContext(Dispatchers.IO) {
-            try {
-                val lastTwoDigits = nodeCode.takeLast(2)
-                val domain = "$nodeCode.stservice$lastTwoDigits.ddnsfree.com"
-                Log.d("LoginActivity", "Making DNS query for: $domain")
-                val url = URL("https://dns.alidns.com/resolve?name=$domain&type=TXT")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 10000
-                connection.readTimeout = 10000
-                
-                Log.d("LoginActivity", "DNS query response code: ${connection.responseCode}")
-                if (connection.responseCode != 200) {
+            // The TXT record is mirrored across providers, so try each in turn
+            // and use the first that answers. Only when none of them does is
+            // the lookup a real failure.
+            //
+            // allProvidersSaidNotFound stays true only while every provider
+            // returns NXDOMAIN. That matters because "Node code not found" is
+            // one of the messages handleValidationFailure counts towards the
+            // user's 3 attempts - a provider that is merely broken must not
+            // cost them an attempt.
+            var allProvidersSaidNotFound = true
+            var lastProblem: String? = null
+
+            for (url in TXTRecordSource.urlsFor(nodeCode)) {
+                try {
+                    Log.d("LoginActivity", "Making DNS query: $url")
+                    val connection = URL(url).openConnection() as HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.connectTimeout = 10000
+                    connection.readTimeout = 10000
+
+                    Log.d("LoginActivity", "DNS query response code: ${connection.responseCode}")
+                    if (connection.responseCode != 200) {
+                        connection.disconnect()
+                        Log.w("LoginActivity", "Cannot reach DNS. StatusCode=" + connection.responseCode)
+                        allProvidersSaidNotFound = false
+                        lastProblem = "Cannot reach DNS, please try again. Status code: " + connection.responseCode
+                        continue
+                    }
+
+                    val response = connection.inputStream.bufferedReader().readText()
                     connection.disconnect()
-                    Log.w("LoginActivity", "Cannot reach DNS. StatusCode=" + connection.responseCode)
-                    return@withContext ValidationResult(false, "Cannot reach DNS, please try again. Status code: " + connection.responseCode)
-                }
 
-                val response = connection.inputStream.bufferedReader().readText()
-                connection.disconnect()
+                    Log.d("LoginActivity", "DNS response: $response")
+                    val jsonResponse = JSONObject(response)
+                    val status = jsonResponse.getInt("Status")
 
-                Log.d("LoginActivity", "DNS response: $response")
-                val jsonResponse = JSONObject(response)
-                val status = jsonResponse.getInt("Status")
+                    if (status == 0 && jsonResponse.has("Answer")) {
+                        val answers = jsonResponse.getJSONArray("Answer")
+                        if (answers.length() > 0) {
+                            val txtData = answers.getJSONObject(0).getString("data")
+                            Log.d("LoginActivity", "TXT record data: $txtData")
 
-                if (status == 0 && jsonResponse.has("Answer")) {
-                    val answers = jsonResponse.getJSONArray("Answer")
-                    if (answers.length() > 0) {
-                        val txtData = answers.getJSONObject(0).getString("data")
-                        Log.d("LoginActivity", "TXT record data: $txtData")
+                            val txtInfo = TXTRecordParser.parseTXTData(txtData)
 
-                        val txtInfo = TXTRecordParser.parseTXTData(txtData)
+                            // Use cache-aware logic through orchestrator
+                            val orchestrator = STServiceOrchestrator.getInstance()
+                            val cachedTxtInfo = orchestrator.getCachedTxtRecordForLogin(this@LoginActivity, nodeCode)
 
-                        // Use cache-aware logic through orchestrator
-                        val orchestrator = STServiceOrchestrator.getInstance()
-                        val cachedTxtInfo = orchestrator.getCachedTxtRecordForLogin(this@LoginActivity, nodeCode)
-
-                        val finalTxtInfo = if (cachedTxtInfo != null && txtData.isNotEmpty()) {
-                            if (txtInfo.modified <= cachedTxtInfo.modified) {
-                                Log.d("LoginActivity", "DNS returned stale data (${txtInfo.modified} <= ${cachedTxtInfo.modified}), using cached")
-                                cachedTxtInfo
+                            val finalTxtInfo = if (cachedTxtInfo != null && txtData.isNotEmpty()) {
+                                if (txtInfo.modified <= cachedTxtInfo.modified) {
+                                    Log.d("LoginActivity", "DNS returned stale data (${txtInfo.modified} <= ${cachedTxtInfo.modified}), using cached")
+                                    cachedTxtInfo
+                                } else {
+                                    Log.d("LoginActivity", "DNS returned fresh data (${txtInfo.modified} > ${cachedTxtInfo.modified}), updating cache")
+                                    orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
+                                    txtInfo
+                                }
                             } else {
-                                Log.d("LoginActivity", "DNS returned fresh data (${txtInfo.modified} > ${cachedTxtInfo.modified}), updating cache")
+                                Log.d("LoginActivity", "No cached data available, using fresh DNS data")
                                 orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
                                 txtInfo
                             }
-                        } else {
-                            Log.d("LoginActivity", "No cached data available, using fresh DNS data")
-                            orchestrator.cacheTxtRecordForLogin(this@LoginActivity, txtInfo, nodeCode)
-                            txtInfo
+
+                            return@withContext validateTxtRecord(finalTxtInfo)
                         }
+                    }
 
-                        return@withContext validateTxtRecord(finalTxtInfo)
+                    // No usable Answer from this provider. Distinguish a genuine
+                    // "this node code doesn't exist" (NXDOMAIN, RCODE 3) from the
+                    // resolver itself failing the query (SERVFAIL, RCODE 2, and
+                    // other non-zero RCODEs) - the latter isn't evidence the code
+                    // is invalid.
+                    when (status) {
+                        0 -> {
+                            Log.w("LoginActivity", "Status was 0, but error parsing dns")
+                            allProvidersSaidNotFound = false
+                            lastProblem = "Error parsing DNS: " + jsonResponse
+                        }
+                        2 -> {
+                            Log.w("LoginActivity", "DNS resolver returned SERVFAIL (status 2) for the query")
+                            allProvidersSaidNotFound = false
+                            lastProblem = "DNS server error, please try again"
+                        }
+                        3 -> {
+                            Log.w("LoginActivity", "Node code not found at this provider (NXDOMAIN), trying next")
+                        }
+                        else -> {
+                            Log.w("LoginActivity", "DNS returned status $status, trying next provider")
+                            allProvidersSaidNotFound = false
+                            lastProblem = "DNS error (status $status), please try again"
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.e("LoginActivity", "Network error querying $url: ${e.message}", e)
+                    allProvidersSaidNotFound = false
+                    lastProblem = "Network error: ${e.message}"
                 }
+            }
 
-                // No usable Answer. Distinguish a genuine "this node code
-                // doesn't exist" (NXDOMAIN, RCODE 3) from the resolver itself
-                // failing the query (SERVFAIL, RCODE 2, and other non-zero
-                // RCODEs) — the latter isn't evidence the code is invalid, so
-                // it gets its own message and (since handleValidationFailure
-                // only matches specific strings) doesn't burn one of the
-                // user's 3 login attempts.
-                when (status) {
-                    0 -> {
-                        Log.w("LoginActivity", "Status was 0, but error parsing dns")
-                        ValidationResult(false, "Error parsing DNS: " + jsonResponse)
-                    }
-                    2 -> {
-                        Log.w("LoginActivity", "DNS resolver returned SERVFAIL (status 2) for the query")
-                        ValidationResult(false, "DNS server error, please try again")
-                    }
-                    3 -> {
-                        Log.w("LoginActivity", "Node code not found in DNS (NXDOMAIN)")
-                        ValidationResult(false, "Node code not found")
-                    }
-                    else -> {
-                        Log.w("LoginActivity", "Node code not found in DNS (status $status)")
-                        ValidationResult(false, "DNS error (status $status), please try again")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("LoginActivity", "Network error during validation: ${e.message}", e)
-                ValidationResult(false, "Network error: ${e.message}")
+            if (allProvidersSaidNotFound) {
+                Log.w("LoginActivity", "Node code not found at any provider")
+                ValidationResult(false, "Node code not found")
+            } else {
+                Log.w("LoginActivity", "No provider returned a record; last problem: $lastProblem")
+                ValidationResult(false, lastProblem ?: "DNS error, please try again")
             }
         }
     }

@@ -48,9 +48,11 @@ class STServiceOrchestrator private constructor() {
         private const val PREF_ERROR_MESSAGE = "error_message"
         private const val PREF_CACHED_TXT_RECORD = "cached_txt_record"
         private const val PREF_CACHED_NODE_CODE = "cached_node_code"
-        private const val PREF_DYNU_API_KEY = "dynu_api_key"
 
-        private const val DYNU_API_BASE_URL = "https://api.dynu.com/v2/dns"
+        // Backend marks a card consumed on every DNS provider; the app only
+        // needs to send the node code.
+        private const val CONSUMED_STATUS_ENDPOINT =
+            "https://stvpn.tradetracer.ai/api/membercard/update-consumed-status"
         private const val CHECK_INTERVAL_MINUTES = 15L // WorkManager minimum
         private const val TEST_INTERVAL_MINUTES = 1L // For testing only
 
@@ -127,16 +129,6 @@ class STServiceOrchestrator private constructor() {
         cacheTxtRecord(context, txtInfo, nodeCode)
     }
     
-    fun setDynuApiKey(context: Context, apiKey: String) {
-        val prefs = getPrefs(context)
-        prefs.edit().putString(PREF_DYNU_API_KEY, apiKey).apply()
-        Log.d("STServiceOrchestrator", "Dynu API key stored")
-    }
-    
-    private fun getDynuApiKey(context: Context): String? {
-        return getPrefs(context).getString(PREF_DYNU_API_KEY, null)
-    }
-    
     suspend fun updateConsumedStatus(
         context: Context,
         txtInfo: com.github.kr328.clash.util.TXTRecordInfo,
@@ -146,116 +138,87 @@ class STServiceOrchestrator private constructor() {
             val nodeCode = getNodeCodeFromActiveProfile()
             if (nodeCode == null) {
                 Log.w("STServiceOrchestrator", "No node code found for consumed update")
-                failConsumedUpdate(context, "No node code found - cannot update consumed status", onError)
+                onError?.invoke("No node code found - cannot update consumed status")
                 return
             }
 
-            val apiKey = getDynuApiKey(context)
-            if (apiKey.isNullOrEmpty()) {
-                Log.w("STServiceOrchestrator", "No Dynu API key configured - cannot update consumed status")
-                failConsumedUpdate(context, "No API key configured - cannot update consumed status", onError)
-                return
-            }
+            Log.d("STServiceOrchestrator", "Marking consumed=true via backend for node: $nodeCode")
 
-            if (txtInfo.domainId == 0L || txtInfo.recordId == 0L) {
-                Log.w("STServiceOrchestrator", "Missing domain_id or record_id - cannot update consumed status")
-                failConsumedUpdate(context, "Missing domain_id or record_id - cannot update consumed status", onError)
-                return
-            }
+            val result = postConsumedStatus(nodeCode)
 
-            Log.d("STServiceOrchestrator", "Updating consumed=true via Dynu API for node: $nodeCode")
-
-            // Create updated JSON with consumed=true
-            val updatedJson = createUpdatedTxtRecord(txtInfo, nodeCode, consumed = true)
-
-            // Call Dynu API
-            val statusCode = callDynuApiToUpdateRecord(apiKey, txtInfo.domainId, txtInfo.recordId, nodeCode, updatedJson)
-
-            if (statusCode == HttpURLConnection.HTTP_OK) {
-                Log.d("STServiceOrchestrator", "Successfully updated consumed=true via Dynu API")
-                // Update local cache with consumed=true
+            if (result.statusCode == HttpURLConnection.HTTP_OK) {
+                Log.d("STServiceOrchestrator", "Successfully marked consumed=true via backend")
                 val updatedTxtInfo = txtInfo.copy(consumed = true, modified = System.currentTimeMillis() / 1000L)
                 cacheTxtRecord(context, updatedTxtInfo, nodeCode)
             } else {
-                Log.w("STServiceOrchestrator", "Failed to update consumed status via Dynu API")
-                failConsumedUpdate(context, "Failed to update consumed status via API. Status code: $statusCode", onError)
+                // Deliberately does not stop the VPN - the backend being briefly
+                // unreachable is not grounds to disconnect a session that is
+                // already connected and passing traffic. The card simply stays
+                // unconsumed until the next successful call.
+                //
+                // The backend always replies { success, message } (see
+                // src/routes/consumed.js), so surface that message when present
+                // rather than a bare status code.
+                val backendMessage = result.body?.let { body ->
+                    try { JSONObject(body).optString("message", "") } catch (e: Exception) { "" }
+                }
+                val errorMessage = if (!backendMessage.isNullOrEmpty()) {
+                    backendMessage
+                } else {
+                    "Failed to update consumed status. Status code: ${result.statusCode}"
+                }
+                Log.w("STServiceOrchestrator", "Failed to mark consumed status via backend: $errorMessage")
+                onError?.invoke(errorMessage)
             }
 
         } catch (e: Exception) {
             Log.e("STServiceOrchestrator", "Error updating consumed status", e)
-            failConsumedUpdate(context, "Error updating consumed status: ${e.message}", onError)
+            onError?.invoke("Error updating consumed status: ${e.message}")
         }
     }
 
-    /** Stops the VPN and reports [message] to the caller when a consumed-status update cannot proceed. */
-    private suspend fun failConsumedUpdate(context: Context, message: String, onError: (suspend (String) -> Unit)?) {
+    private data class ConsumedStatusResponse(val statusCode: Int, val body: String?)
+
+    private suspend fun postConsumedStatus(nodeCode: String): ConsumedStatusResponse = withContext(Dispatchers.IO) {
         try {
-            context.stopClashService()
-        } catch (e: Exception) {
-            Log.e("STServiceOrchestrator", "Error stopping service after consumed status failure", e)
-        }
-        onError?.invoke(message)
-    }
-    
-    private fun createUpdatedTxtRecord(txtInfo: com.github.kr328.clash.util.TXTRecordInfo, nodeCode: String, consumed: Boolean): String {
-        val json = org.json.JSONObject()
-        json.put("v", txtInfo.version)
-        json.put("b", txtInfo.banned)
-        json.put("e", txtInfo.expiration?.let { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(it) })
-        json.put("c", consumed)
-        json.put("m", System.currentTimeMillis() / 1000L) // Update modified timestamp
-        json.put("u", txtInfo.vpnUrl)
-        json.put("d", txtInfo.domainId)
-        json.put("r", txtInfo.recordId)
-        return json.toString()
-    }
-    
-    private suspend fun callDynuApiToUpdateRecord(apiKey: String, domainId: Long, recordId: Long, nodeCode: String, textData: String): Int = withContext(Dispatchers.IO) {
-        try {
-            val url = URL("$DYNU_API_BASE_URL/$domainId/record/$recordId")
+            val url = URL(CONSUMED_STATUS_ENDPOINT)
             val connection = url.openConnection() as HttpURLConnection
-            
+
             connection.requestMethod = "POST"
-            connection.setRequestProperty("API-Key", apiKey)
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
-            connection.connectTimeout = 30000
-            connection.readTimeout = 30000
-            
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
+
             val requestBody = org.json.JSONObject().apply {
-                put("nodeName", nodeCode)
-                put("recordType", "TXT")
-                put("ttl", 60)
-                put("state", true)
-                put("textData", textData)
+                put("nodeCode", nodeCode)
             }
-            
-            Log.d("STServiceOrchestrator", "Dynu API request: ${requestBody}")
-            
+
             connection.outputStream.use { os ->
                 os.write(requestBody.toString().toByteArray())
             }
-            
+
             val responseCode = connection.responseCode
-            val responseBody = if (responseCode == HttpURLConnection.HTTP_OK) {
-                connection.inputStream.bufferedReader().readText()
-            } else {
-                connection.errorStream?.bufferedReader()?.readText() ?: "No error details"
+            val responseBody = try {
+                (if (responseCode == HttpURLConnection.HTTP_OK) connection.inputStream else connection.errorStream)
+                    ?.bufferedReader()?.readText()
+            } catch (e: Exception) {
+                null
             }
-            
-            Log.d("STServiceOrchestrator", "Dynu API response code: $responseCode")
-            Log.d("STServiceOrchestrator", "Dynu API response body: $responseBody")
-            
+
+            Log.d("STServiceOrchestrator", "Consumed-status response: $responseCode $responseBody")
+
             connection.disconnect()
 
-            responseCode
+            ConsumedStatusResponse(responseCode, responseBody)
 
         } catch (e: Exception) {
-            Log.e("STServiceOrchestrator", "Error calling Dynu API", e)
-            -1
+            Log.e("STServiceOrchestrator", "Error calling consumed-status endpoint", e)
+            ConsumedStatusResponse(-1, null)
         }
     }
-    
+
+
     private fun cacheTxtRecord(context: Context, txtInfo: com.github.kr328.clash.util.TXTRecordInfo, nodeCode: String) {
         val prefs = getPrefs(context)
         val jsonString = serializeTxtRecord(txtInfo)
@@ -288,11 +251,9 @@ class STServiceOrchestrator private constructor() {
         json.put("c", txtInfo.consumed)
         json.put("m", txtInfo.modified)
         json.put("u", txtInfo.vpnUrl)
-        json.put("d", txtInfo.domainId)
-        json.put("r", txtInfo.recordId)
         return json.toString()
     }
-    
+
     private fun deserializeTxtRecord(jsonString: String): com.github.kr328.clash.util.TXTRecordInfo? {
         return try {
             val json = org.json.JSONObject(jsonString)
@@ -301,24 +262,20 @@ class STServiceOrchestrator private constructor() {
             val consumed = json.optBoolean("c", false)
             val modified = json.optLong("m", 0L)
             val vpnUrl = json.optString("u", "")
-            val domainId = json.optLong("d", 0L)
-            val recordId = json.optLong("r", 0L)
-            
+
             var expiration: Date? = null
             val expirationStr = json.optString("e", "")
             if (!expirationStr.isNullOrEmpty() && expirationStr != "null") {
                 expiration = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(expirationStr)
             }
-            
+
             com.github.kr328.clash.util.TXTRecordInfo(
                 version = version,
                 banned = banned,
                 expiration = expiration,
                 consumed = consumed,
                 modified = modified,
-                vpnUrl = if (vpnUrl.isNotEmpty()) vpnUrl else null,
-                domainId = domainId,
-                recordId = recordId
+                vpnUrl = if (vpnUrl.isNotEmpty()) vpnUrl else null
             )
         } catch (e: Exception) {
             Log.e("STServiceOrchestrator", "Error deserializing cached TXT record", e)
@@ -361,11 +318,12 @@ class STServiceOrchestrator private constructor() {
         }
     }
     
-    private fun buildTXTCheckURL(nodeCode: String): String {
-        val lastTwoDigits = nodeCode.takeLast(2)
-        val domain = "$nodeCode.stservice$lastTwoDigits.ddnsfree.com"
-        return "https://dns.alidns.com/resolve?name=$domain&type=TXT"
-    }
+    /**
+     * TXT record is mirrored across providers - try each until one answers.
+     * See [com.github.kr328.clash.util.TXTRecordSource].
+     */
+    private fun buildTXTCheckURLs(nodeCode: String): List<String> =
+        com.github.kr328.clash.util.TXTRecordSource.urlsFor(nodeCode)
     
     suspend fun performImmediateCheck(context: Context) {
         Log.d("STServiceOrchestrator", "Performing immediate check for testing")
@@ -640,38 +598,6 @@ class STServiceOrchestrator private constructor() {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
     
-    suspend fun fetchTXTRecordWithMandatoryCheck(context: Context): com.github.kr328.clash.util.TXTRecordInfo? {
-        val nodeCode = getNodeCodeFromActiveProfile()
-        if (nodeCode == null) {
-            Log.w("STServiceOrchestrator", "No node code found in active profile")
-            return null
-        }
-
-        val cachedTxt = getCachedTxtRecord(context, nodeCode)
-        val freshTxt = checkTXTRecordMandatory(nodeCode)
-
-        if (cachedTxt != null && freshTxt != null) {
-            if (freshTxt.modified <= cachedTxt.modified) {
-                Log.d("STServiceOrchestrator", "DNS returned stale data (${freshTxt.modified} <= ${cachedTxt.modified}), using cached")
-                return cachedTxt
-            } else {
-                Log.d("STServiceOrchestrator", "DNS returned fresh data (${freshTxt.modified} > ${cachedTxt.modified}), updating cache")
-                cacheTxtRecord(context, freshTxt, nodeCode)
-                return freshTxt
-            }
-        } else if (freshTxt != null) {
-            Log.d("STServiceOrchestrator", "No cached data, using fresh DNS data (${freshTxt.modified})")
-            cacheTxtRecord(context, freshTxt, nodeCode)
-            return freshTxt
-        } else if (cachedTxt != null) {
-            Log.w("STServiceOrchestrator", "DNS fetch failed, but this is mandatory - not using cached data")
-            return null // Don't use cached data for mandatory checks
-        } else {
-            Log.w("STServiceOrchestrator", "No cached or fresh data available for mandatory check")
-            return null
-        }
-    }
-
     suspend fun fetchTXTRecordWithCache(context: Context): com.github.kr328.clash.util.TXTRecordInfo? {
         val nodeCode = getNodeCodeFromActiveProfile()
         if (nodeCode == null) {
@@ -704,66 +630,50 @@ class STServiceOrchestrator private constructor() {
         }
     }
 
-    private suspend fun checkTXTRecordMandatory(nodeCode: String): com.github.kr328.clash.util.TXTRecordInfo? = withContext(Dispatchers.IO) {
+    /**
+     * Fetch the DoH response body from one provider, or null when it did not
+     * answer with HTTP 200 inside the timeout.
+     */
+    private suspend fun fetchTXTResponse(txtCheckURL: String): String? = withTimeoutOrNull(30000) {
+        val url = URL(txtCheckURL)
+        val connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 15000
+        connection.readTimeout = 15000
+
         try {
-            val txtCheckURL = buildTXTCheckURL(nodeCode)
-            Log.d("STServiceOrchestrator", "Mandatory TXT record check for: $txtCheckURL")
-            
-            val result = withTimeoutOrNull(30000) {
-                val url = URL(txtCheckURL)
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
-                
-                val responseCode = connection.responseCode
-                Log.d("STServiceOrchestrator", "Mandatory check response code: $responseCode")
-                
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    val response = connection.inputStream.bufferedReader().readText()
-                    connection.disconnect()
-                    response
-                } else {
-                    connection.disconnect()
-                    throw Exception("HTTP $responseCode")
-                }
+            val responseCode = connection.responseCode
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                connection.inputStream.bufferedReader().readText()
+            } else {
+                Log.w("STServiceOrchestrator", "TXT check returned HTTP $responseCode for $txtCheckURL")
+                null
             }
-            
-            result?.let { parseTXTResponse(it) }
-        } catch (e: Exception) {
-            Log.e("STServiceOrchestrator", "Error in mandatory TXT record check", e)
-            throw e // Re-throw for mandatory checks
+        } finally {
+            connection.disconnect()
         }
     }
-    
+
+    /**
+     * Read the TXT record, trying each provider in turn.
+     * Returns null when none of them produced a usable answer.
+     */
     private suspend fun checkTXTRecord(nodeCode: String): com.github.kr328.clash.util.TXTRecordInfo? = withContext(Dispatchers.IO) {
-        try {
-            val txtCheckURL = buildTXTCheckURL(nodeCode)
-            Log.d("STServiceOrchestrator", "Checking TXT record for: $txtCheckURL")
-            
-            val result = withTimeoutOrNull(30000) {
-                val url = URL(txtCheckURL)
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
-                
-                val responseCode = connection.responseCode
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    val response = connection.inputStream.bufferedReader().readText()
-                    connection.disconnect()
-                    response
-                } else {
-                    connection.disconnect()
-                    null
+        for (txtCheckURL in buildTXTCheckURLs(nodeCode)) {
+            try {
+                Log.d("STServiceOrchestrator", "Checking TXT record for: $txtCheckURL")
+                val record = fetchTXTResponse(txtCheckURL)?.let { parseTXTResponse(it) }
+
+                if (record != null) {
+                    return@withContext record
                 }
+            } catch (e: Exception) {
+                Log.w("STServiceOrchestrator", "TXT check failed for $txtCheckURL: ${e.message}")
             }
-            
-            result?.let { parseTXTResponse(it) }
-        } catch (e: Exception) {
-            Log.e("STServiceOrchestrator", "Error checking TXT record", e)
-            null
         }
+
+        Log.w("STServiceOrchestrator", "No provider returned a TXT record for $nodeCode")
+        null
     }
     
     private fun parseTXTResponse(response: String): com.github.kr328.clash.util.TXTRecordInfo? {
